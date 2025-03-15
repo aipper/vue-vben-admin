@@ -59,13 +59,18 @@ jobs:
           git push origin main
 
       # 步骤 7：推送更新到 Gitea
-      - name: Push Changes to Gitea
+      - name: Push Changes to Gitea Private Repository
         run: |
-          # 使用 HTTPS 凭据推送到 Gitea
-          git remote add gitea https://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_TOKEN }}@gitea.allblux.wang/aipper/webbase.git
+          # 使用 Personal Access Token 格式 - 常用于私有仓库
+          git remote add gitea https://oauth2:${{ secrets.GITEA_TOKEN }}@gitea.allblux.wang/aipper/webbase.git
           
-          # 确保远程 URL 不会在日志中显示凭据
-          git remote set-url --push gitea https://${{ secrets.GITEA_USERNAME }}:'***'@gitea.allblux.wang/aipper/webbase.git
+          # 或者尝试用户名+令牌格式
+          # git remote add gitea https://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_TOKEN }}@gitea.allblux.wang/aipper/webbase.git
           
-          # 推送到 Gitea
-          git push gitea main
+          # 设置较长的超时时间，私有仓库可能需要更多时间
+          git config http.postBuffer 524288000
+          git config http.lowSpeedLimit 1000
+          git config http.lowSpeedTime 300
+          
+          # 尝试推送
+          git push -f gitea main
