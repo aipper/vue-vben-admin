@@ -1,0 +1,106 @@
+name: Sync Upstream and Push to Gitea
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天 UTC 00:00（北京时间 08:00）执行
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # 增加超时时间，避免大仓库同步中断
+
+    steps:
+      # 步骤 1：检出 Fork 仓库（完整历史 + 保留本地 .github）
+      - name: Checkout Forked Repository
+        uses: actions/checkout@v4 # 升级到 v4 版本（更稳定）
+        with:
+          ref: main
+          fetch-depth: 0 # 必须获取完整 git 历史
+          persist-credentials: false # 避免凭证冲突
+
+      # 步骤 2：配置 Git 基础环境
+      - name: Configure Git Identity & Network
+        run: |
+          # 设置提交身份
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 优化网络配置（针对大文件/慢网络）
+          git config http.postBuffer 524288000
+          git config http.lowSpeedLimit 1000
+          git config http.lowSpeedTime 300
+          git config core.compression 0  # 禁用压缩，加快传输
+
+      # 步骤 3：添加上游仓库远程地址
+      - name: Add Upstream Remote
+        run: |
+          git remote add upstream https://github.com/vbenjs/vue-vben-admin.git
+          git remote -v  # 验证远程仓库添加结果
+          git fetch upstream main  # 拉取上游最新代码（仅拉取，不合并）
+
+      # 步骤 4：合并上游代码（核心：跳过 .github 目录）
+      - name: Merge Upstream (Exclude .github Directory)
+        run: |
+          # 标记合并开始，避免分支状态异常
+          echo "=== Starting merge from upstream/main ==="
+
+          # 第一步：尝试无提交合并（--no-commit 保留手动控制）
+          MERGE_SUCCESS=0
+          git merge upstream/main --no-commit --no-edit || {
+            # 常规合并失败，尝试允许不相关历史
+            echo "Normal merge failed, retry with --allow-unrelated-histories"
+            git merge upstream/main --no-commit --no-edit --allow-unrelated-histories || {
+              echo "❌ Merge failed even with --allow-unrelated-histories"
+              git merge --abort
+              exit 1
+            }
+          }
+          MERGE_SUCCESS=1
+
+          # 第二步：核心操作 - 排除 .github 目录（不参与合并）
+          if [ $MERGE_SUCCESS -eq 1 ]; then
+            echo "=== Excluding .github directory from merge ==="
+            # 取消暂存 .github 目录的所有变更（上游的 .github 不会被合并）
+            git reset HEAD .github/
+            # 强制检出本地的 .github 目录（确保完全保留本地版本）
+            git checkout HEAD -- .github/
+            # 删除合并过程中可能生成的 .github 临时文件（如有）
+            git clean -fd .github/
+
+            # 第三步：提交合并结果（仅包含非 .github 目录的变更）
+            echo "=== Committing merge result ==="
+            # 检查是否有实际变更（避免空提交）
+            if git status --porcelain | grep -v "^??" | grep -qv ".github/"; then
+              git commit -m "Merge upstream/main (exclude .github directory) - $(date +%Y-%m-%d)"
+              echo "✅ Merge completed successfully"
+            else
+              git merge --abort
+              echo "ℹ️ No changes to merge (skip commit)"
+            fi
+          fi
+
+      # 步骤 5：推送更新到 GitHub Fork 仓库
+      - name: Push to GitHub Fork
+        run: |
+          # 重新设置 origin 远程（避免凭证问题）
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push origin main --force-with-lease  # 安全强制推送（避免覆盖他人提交）
+
+      # 步骤 6：推送更新到 Gitea 私有仓库
+      - name: Push to Gitea Private Repository
+        run: |
+          # 添加 Gitea 远程仓库（使用 Token 认证）
+          git remote add gitea https://oauth2:${{ secrets.GITEA_TOKEN }}@gitea.allblux.wang/aipper/webbase.git
+          # 推送（保持和 GitHub 一致的代码状态）
+          git push gitea main --force-with-lease
+          # 清理远程配置（避免后续冲突）
+          git remote remove gitea
+
+      # 步骤 7：输出同步结果（便于调试）
+      - name: Print Sync Result
+        run: |
+          echo "=== Sync Summary ==="
+          git log --oneline -5  # 打印最新 5 条提交记录
+          git remote -v         # 验证远程仓库配置
+          echo "✅ Sync workflow completed at $(date +%Y-%m-%d\ %H:%M:%S)"
