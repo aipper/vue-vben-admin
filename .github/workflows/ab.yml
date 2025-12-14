@@ -106,7 +106,7 @@ jobs:
       - name: Push to Gitea Private Repository
         run: |
           # 添加 Gitea 远程仓库（使用 Token 认证）
-          git remote add gitea https://oauth2:${{ secrets.GITEA_TOKEN }}@gitea.allblux.wang/aipper/webbase.git
+          git remote add gitea https://oauth2:${{ secrets.GITEA_TOKEN }}@gitea.aipper.de/aipper/webbase.git
           # 仅当有变更时推送
           if ! git diff --quiet main gitea/main 2>/dev/null; then
             git push gitea main --force-with-lease
